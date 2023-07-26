@@ -1,0 +1,496 @@
+---
+title: "Trabajo fin de master"
+author: "Celia Sifre Armengol"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(R2WinBUGS)
+library(rlang)
+library(ggplot2)
+library(magrittr)
+library(dplyr)
+library(Hmisc)
+```
+
+## Base de datos 
+
+Base de datos con los años 2013, 2014 y 2015 con las capturas de Thanasimus formicarius y las capturas de los escolítidos de interés. 
+
+```{r cargamos los datos, echo=FALSE}
+DatosModelo <- read_excel("DatosModelo.xlsx")
+
+DatosModelo$Plot <- factor(as.numeric(DatosModelo$Plot), ordered = T)
+
+DatosModelo$TempDif <- DatosModelo$TMaxMed - DatosModelo$TMinMed
+#cor(DatosModelo$TMinMed, DatosModelo$TempDif)
+#cor(DatosModelo$TMinMed, DatosModelo$TMaxMed)
+```
+
+Tabla descriptiva de los datos: 
+
+```{r summary datos, echo=FALSE}
+describe(DatosModelo)
+```
+
+Correlaciones entre nuestras variables:
+
+```{r correlaciones}
+round(cor(DatosModelo[,c(6,15,16,17,26,24,25)]),2)
+```
+
+```{r pairs}
+pairs(DatosModelo[,c(6,15,16,17,26,24,25)])
+
+DatosModelo$logCap <- log(DatosModelo$Captures)
+pairs(DatosModelo[,c(27,15,17,24,25)])
+```
+
+Serie temporal de las capturas de nuestra especie de interés:
+
+```{r tendencias}
+ggplot(DatosModelo, aes(x = Periodo, y = Captures, color = as.factor(Plot))) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Periodo", y = "Capturas", color = "Parcela") +
+  theme_minimal()
+```
+
+
+# Modelos
+
+```{r datos sin parcela 5, echo=FALSE}
+DatosModeloSIN5 <- DatosModelo[-which(DatosModelo$Plot == 5),]
+```
+
+```{r modelo poisson nulo SIN 5, eval=FALSE}
+set.seed(22)
+
+Modelo <- function(){
+   for (i in 1:14){
+     for (j in 1:35){
+        Captures[i,j] ~ dpois(lambda[i,j])
+        log(lambda[i,j]) <- beta0 + v[i] + g[j]
+     }
+     v[i] ~ dnorm(0,tauv)
+   }
+   g[1] ~ dnorm(0,taug)
+   for (j in 2:35){
+    g[j] ~  dnorm(g[j-1],taug)     
+   }
+   taug <- 1/pow(sdg,2)
+   sdg ~ dunif(0,10)
+   tauv <- 1/pow(sdv,2)
+   sdv ~ dunif(0,10)
+   
+   #distribuciones iniciales
+   beta0 ~ dflat()
+}
+
+#Datos
+Datos <- list(Captures = matrix(DatosModeloSIN5$Captures, nrow = 14))
+
+#Iniciales
+Iniciales <- function(){
+  list(beta0 = rnorm(1), v =rnorm(14), g = rnorm(35), 
+       sdg = runif(1,0,6), sdv = runif(1,0,3))
+}
+
+#Parámetros
+Param <- c("beta0", "v", "sdv", "g", "sdg")
+```
+
+```{r, echo=FALSE}
+ResulNulo <- readRDS("resultadosNulo.rds")
+```
+
+```{r resultados modelo poisson nulo SIN 5}
+ResulNulo
+#Rhat
+summary((ResulNulo$summary[, "Rhat"]))
+```
+
+El modelo no converge. 
+
+```{r modelo poisson con todas covariables SIN 5, eval=FALSE}
+set.seed(22)
+
+Modelo <- function(){
+   for (i in 1:14){
+     for (j in 1:35){
+        Captures[i,j] ~ dpois(lambda[i,j])
+        log(lambda[i,j]) <- beta0 + beta1*TMin[i,j] + beta2*Precipita[i,j] + 
+          beta3*AltMed[i,j] + beta4*Especies[i,j] + beta5*TDif[i,j] + v[i] + g[j]
+     }
+     v[i] ~ dnorm(0,tauv)
+   }
+   g[1] ~ dnorm(0,taug)
+   for (j in 2:35){
+    g[j] ~  dnorm(g[j-1],taug)     
+   }
+   taug <- 1/pow(sdg,2)
+   sdg ~ dunif(0,10)
+   tauv <- 1/pow(sdv,2)
+   sdv ~ dunif(0,10)
+   
+   #distribuciones iniciales
+   beta0 ~ dflat()
+   beta1 ~ dflat()
+   beta2 ~ dflat()
+   beta3 ~ dflat()
+   beta4 ~ dflat()
+   beta5 ~ dflat()
+}
+
+#Datos
+Datos <- list(Captures = matrix(DatosModeloSIN5$Captures, nrow = 14),
+              TMin = matrix(DatosModeloSIN5$TMinMed, nrow = 14),
+              Precipita = matrix(DatosModeloSIN5$Precipita, nrow = 14),
+              AltMed = matrix(scale(DatosModeloSIN5$AltMed), nrow = 14),
+              Especies = matrix(scale(DatosModeloSIN5$SumaEspecies), nrow = 14),
+              TDif = matrix(scale(DatosModeloSIN5$TempDif), nrow = 14))
+
+#Iniciales
+Iniciales <- function(){
+  list(beta0 = rnorm(1), v =rnorm(14), sdv = runif(1,0,3), g = rnorm(35), sdg = runif(1,0,6), beta1 = rnorm(1), beta2 = rnorm(1), beta3 = rnorm(1), beta4 = rnorm(1), beta5 = rnorm(1))
+}
+
+#Parámetros
+Param <- c("beta0","beta1","beta2","beta3","beta4", "v", "sdv", "g", "sdg")
+```
+
+```{r, echo=FALSE}
+Resul1 <- readRDS("ResultadosTodasCovariables.rds")
+```
+
+```{r resultado poisson con todas covariables SIN 5}
+Resul1
+#Rhat
+summary((Resul1$summary[, "Rhat"]))
+```
+
+El modelo no converge. 
+
+```{r modelo poisson con todas covariables sin g SIN 5, eval=FALSE}
+set.seed(22)
+
+Modelo <- function(){
+   for (i in 1:14){
+     for (j in 1:35){
+        Captures[i,j] ~ dpois(lambda[i,j])
+        log(lambda[i,j]) <- beta0 + beta1*TMin[i,j] + beta2*Precipita[i,j] + 
+          beta3*AltMed[i,j] + beta4*Especies[i,j] + beta5*TDif[i,j] + v[i]
+     }
+     v[i] ~ dnorm(0,tauv)
+   }
+   tauv <- 1/pow(sdv,2)
+   sdv ~ dunif(0,10)
+   
+   #distribuciones iniciales
+   beta0 ~ dflat()
+   beta1 ~ dflat()
+   beta2 ~ dflat()
+   beta3 ~ dflat()
+   beta4 ~ dflat()
+   beta5 ~ dflat()
+}
+
+#Datos
+Datos <- list(Captures = matrix(DatosModeloSIN5$Captures, 
+                                nrow = 14),
+              TMin = matrix(DatosModeloSIN5$TMinMed, 
+                            nrow = 14),
+              Precipita = matrix(DatosModeloSIN5$Precipita, 
+                                 nrow = 14),
+              AltMed = matrix(scale(DatosModeloSIN5$AltMed), 
+                              nrow = 14),
+              Especies = matrix(scale(DatosModeloSIN5$SumaEspecies), 
+                                nrow = 14),
+              TDif = matrix(scale(DatosModeloSIN5$TempDif), 
+                            nrow = 14))
+
+#Iniciales
+Iniciales <- function(){
+  list(beta0 = rnorm(1), v =rnorm(14), sdv = runif(1,0,3),
+       beta1 = rnorm(1), beta2 = rnorm(1), beta3 = rnorm(1), 
+       beta4 = rnorm(1), beta5 = rnorm(1))
+}
+
+#Parámetros
+Param <- c("beta0","beta1","beta2","beta3","beta4", "beta5", "v", "sdv") 
+```
+
+```{r, echo=FALSE}
+Resul2 <- readRDS("ResultadosSinG.rds")
+```
+
+```{r resultado modelo poisson con todas covariables sin g SIN 5}
+Resul2
+#Rhat
+summary(Rhat <- (Resul2$summary[, "Rhat"]))
+```
+
+El modelo no converge. 
+
+```{r modelo poisson con todas covariables sin TDif SIN 5, eval=FALSE}
+set.seed(22)
+
+Modelo <- function(){
+   for (i in 1:14){
+     for (j in 1:35){
+        Captures[i,j] ~ dpois(lambda[i,j])
+        log(lambda[i,j]) <- beta0 + beta1*TMin[i,j] + beta2*Precipita[i,j] + 
+          beta3*AltMed[i,j] + beta4*Especies[i,j] + v[i] + g[j]
+     }
+     v[i] ~ dnorm(0,tauv)
+   }
+   g[1] ~ dnorm(0,taug)
+   for (j in 2:35){
+    g[j] ~  dnorm(g[j-1],taug)     
+   }
+   taug <- 1/pow(sdg,2)
+   sdg ~ dunif(0,10)
+   tauv <- 1/pow(sdv,2)
+   sdv ~ dunif(0,10)
+   
+   #distribuciones iniciales
+   beta0 ~ dflat()
+   beta1 ~ dflat()
+   beta2 ~ dflat()
+   beta3 ~ dflat()
+   beta4 ~ dflat()
+}
+
+#Datos
+Datos <- list(Captures = matrix(DatosModeloSIN5$Captures, 
+                                nrow = 14),
+              TMin = matrix(DatosModeloSIN5$TMinMed, 
+                            nrow = 14),
+              Precipita = matrix(DatosModeloSIN5$Precipita, 
+                                 nrow = 14),
+              AltMed = matrix(scale(DatosModeloSIN5$AltMed), 
+                              nrow = 14),
+              Especies = matrix(scale(DatosModeloSIN5$SumaEspecies), 
+                                nrow = 14))
+
+#Iniciales
+Iniciales <- function(){
+  list(beta0 = rnorm(1), v =rnorm(14), sdv = runif(1,0,3), 
+       g = rnorm(35), sdg = runif(1,0,6), beta1 = rnorm(1), beta2 = rnorm(1), 
+       beta3 = rnorm(1), beta4 = rnorm(1))
+}
+
+#Parámetros
+Param <- c("beta0","beta1","beta2","beta3","beta4", "v", "sdv", "g", "sdg")
+```
+
+```{r, echo=FALSE}
+Resul3 <- readRDS("ResultadosSinTDIF.rds")
+```
+
+```{r resultados modelo poisson con todas covariables sin TDif SIN 5}
+Resul3
+#Rhat
+summary(Rhat <- (Resul3$summary[, "Rhat"]))
+```
+
+El modelo no converge.
+
+```{r modelo poisson sin TDif sin AltMed y sin g SIN 5, eval=FALSE}
+set.seed(22)
+
+Modelo <- function(){
+   for (i in 1:14){
+     for (j in 1:35){
+        Captures[i,j] ~ dpois(lambda[i,j])
+        log(lambda[i,j]) <- beta0 + beta1*TMin[i,j] + beta2*Precipita[i,j] + 
+          beta3*Especies[i,j] + v[i]
+     }
+     v[i] ~ dnorm(0,tauv)
+   }
+   tauv <- 1/pow(sdv,2)
+   sdv ~ dunif(0,10)
+   
+   #distribuciones iniciales
+   beta0 ~ dflat()
+   beta1 ~ dflat()
+   beta2 ~ dflat()
+   beta3 ~ dflat()
+   
+     for (i in 1:14) {
+    for (j in 1:35) {
+      Captures.pred[i,j] ~ dpois(lambda[i,j])
+      resid[i,j] <- pow(Captures[i,j] - Captures.pred[i,j],2) 
+    }
+}
+}
+
+#Datos
+Datos <- list(Captures = matrix(DatosModeloSIN5$Captures, 
+                                nrow = 14),
+              TMin = matrix(DatosModeloSIN5$TMinMed, 
+                            nrow = 14),
+              Precipita = matrix(DatosModeloSIN5$Precipita, 
+                                 nrow = 14),
+              Especies = matrix(scale(DatosModeloSIN5$SumaEspecies),
+                                nrow = 14))
+
+#Iniciales
+Iniciales <- function(){
+  list(beta0 = rnorm(1), v =rnorm(14), sdv = runif(1,0,3),
+       beta1 = rnorm(1), beta2 = rnorm(1), beta3 = rnorm(1))
+}
+
+#Parámetros
+Param <- c("beta0","beta1","beta2","beta3", "v", "sdv", "resid")
+```
+
+```{r, echo=FALSE}
+Resul4 <- readRDS("ResultadosSinTDifSinAltMedSinG.rds")
+```
+
+```{r resultados modelo sin TDif sin AltMed sin g SIN 5}
+Resul4
+#Rhat
+summary(Rhat <- (Resul4$summary[, "Rhat"]))
+summary(Resul4$summary[, "n.eff"])
+
+Resul4$DIC
+Resul4$pD
+
+#MSE
+mean(Resul4$mean$resid)
+```
+
+```{r CON LOG(SUPERFICIE)}
+set.seed(22)
+
+Modelo <- function(){
+   for (i in 1:14){
+     for (j in 1:35){
+        Captures[i,j] ~ dpois(lambda[i,j])
+        log(lambda[i,j]) <- beta0 + beta1*TMin[i,j] + beta2*Precipita[i,j] + 
+          beta3*AltMed[i,j] + beta4*Especies[i,j] + log(Superficie[i,j]) + v[i]
+     }
+     v[i] ~ dnorm(0,tauv)
+   }
+   tauv <- 1/pow(sdv,2)
+   sdv ~ dunif(0,10)
+   
+   #distribuciones iniciales
+   beta0 ~ dflat()
+   beta1 ~ dflat()
+   beta2 ~ dflat()
+   beta3 ~ dflat()
+   beta4 ~ dflat()
+   
+  for (i in 1:14) {
+    for (j in 1:35) {
+      Captures.pred[i,j] ~ dpois(lambda[i,j])
+      resid[i,j] <- pow(Captures[i,j] - Captures.pred[i,j],2) 
+    }
+}
+}
+
+#Datos
+Datos <- list(Captures = matrix(DatosModeloSIN5$Captures, nrow = 14),
+              TMin = matrix(DatosModeloSIN5$TMinMed, nrow = 14),
+              Precipita = matrix(DatosModeloSIN5$Precipita, nrow = 14),
+              AltMed = matrix(scale(DatosModeloSIN5$AltMed), nrow = 14),
+              Especies = matrix(scale(DatosModeloSIN5$SumaEspecies), nrow = 14),
+              Superficie = matrix((DatosModeloSIN5$Superf), nrow = 14))
+
+#Iniciales
+Iniciales <- function(){
+  list(beta0 = rnorm(1), v =rnorm(14), sdv = runif(1,0,3),
+       beta1 = rnorm(1), beta2 = rnorm(1), beta3 = rnorm(1), beta4 = rnorm(1))
+}
+
+#Parámetros
+Param <- c("beta0","beta1","beta2","beta3","beta4", "v", "sdv", "resid")
+```
+
+```{r, echo=FALSE}
+Resul5 <- readRDS("resultadoLogSuperf.rds")
+```
+
+```{r resultado modelo poisson Log Superf}
+Resul5
+#Rhat
+summary(Rhat <- (Resul5$summary[, "Rhat"]))
+summary(Resul5$summary[, "n.eff"])
+
+Resul5$DIC
+Resul5$pD
+
+#MSE
+mean(Resul5$mean$resid)
+```
+
+
+```{r modelo poisson sin TDif y sin g SIN 5, eval=FALSE}
+set.seed(22)
+
+Modelo <- function(){
+   for (i in 1:14){
+     for (j in 1:35){
+        Captures[i,j] ~ dpois(lambda[i,j])
+        log(lambda[i,j]) <- beta0 + beta1*TMin[i,j] + beta2*Precipita[i,j] + 
+          beta3*AltMed[i,j] + beta4*Especies[i,j] + v[i]
+     }
+     v[i] ~ dnorm(0,tauv)
+   }
+   tauv <- 1/pow(sdv,2)
+   sdv ~ dunif(0,10)
+   
+   #distribuciones iniciales
+   beta0 ~ dflat()
+   beta1 ~ dflat()
+   beta2 ~ dflat()
+   beta3 ~ dflat()
+   beta4 ~ dflat()
+   
+  for (i in 1:14) {
+    for (j in 1:35) {
+      Captures.pred[i,j] ~ dpois(lambda[i,j])
+      resid[i,j] <- pow(Captures[i,j] - Captures.pred[i,j],2) 
+    }
+}
+}
+
+#Datos
+Datos <- list(Captures = matrix(DatosModeloSIN5$Captures, nrow = 14),
+              TMin = matrix(DatosModeloSIN5$TMinMed, nrow = 14),
+              Precipita = matrix(DatosModeloSIN5$Precipita, nrow = 14),
+              AltMed = matrix(scale(DatosModeloSIN5$AltMed), nrow = 14),
+              Especies = matrix(scale(DatosModeloSIN5$SumaEspecies), nrow = 14))
+
+#Iniciales
+Iniciales <- function(){
+  list(beta0 = rnorm(1), v =rnorm(14), sdv = runif(1,0,3),
+       beta1 = rnorm(1), beta2 = rnorm(1), beta3 = rnorm(1), beta4 = rnorm(1))
+}
+
+#Parámetros
+Param <- c("beta0","beta1","beta2","beta3","beta4", "v", "sdv", "resid", "Captures.pred")
+```
+
+```{r, echo=FALSE}
+ResulDef <- readRDS("resultadosDef.rds")
+```
+
+```{r resultado modelo definitivo}
+ResulDef
+
+#Rhat
+summary(Rhat <- (ResulDef$summary[, "Rhat"]))
+summary(ResulDef$summary[, "n.eff"])
+ResulDef$DIC
+ResulDef$pD
+
+#MSE
+mean(ResulDef$mean$resid)
+```
+
